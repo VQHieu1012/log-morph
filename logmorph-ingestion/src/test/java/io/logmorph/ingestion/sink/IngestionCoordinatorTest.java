@@ -1,5 +1,5 @@
 
-package io.logmorph.ingestion;
+package io.logmorph.ingestion.sink;
 
 import com.clickhouse.client.api.Client;
 import io.logmorph.ingestion.batch.BatchAccumulator;
