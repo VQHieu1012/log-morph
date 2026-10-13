@@ -46,6 +46,12 @@
             <artifactId>client-v2</artifactId>
             <version>0.10.0</version>
         </dependency>
+
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-clients</artifactId>
+            <version>3.4.0</version>
+        </dependency>
     </dependencies>
 
 </project>
