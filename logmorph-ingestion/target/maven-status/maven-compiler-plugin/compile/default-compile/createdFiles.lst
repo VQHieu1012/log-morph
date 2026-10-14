@@ -1,5 +1,0 @@
-io/logmorph/ingestion/batch/BatchAccumulator.class
-io/logmorph/ingestion/parser/JacksonLogParser$Fields.class
-io/logmorph/ingestion/parser/JacksonLogParser.class
-io/logmorph/ingestion/parser/JacksonLogParser$ArrayKind.class
-io/logmorph/ingestion/parser/JacksonLogParser$1.class
