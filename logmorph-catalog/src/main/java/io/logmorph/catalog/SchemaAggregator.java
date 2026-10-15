@@ -13,11 +13,15 @@ public final class SchemaAggregator {
 
     public void add(Set<SchemaObservation> observations) {
         for (SchemaObservation observation : observations) {
-            schema.computeIfAbsent(
-                    observation.fieldName(),
-                    ignored -> new HashSet<>()
-            ).add(observation.valueType());
+            add(observation.fieldName(), observation.valueType());
         }
+    }
+
+    public void add(String fieldName, ValueType valueType) {
+        schema.computeIfAbsent(
+                fieldName,
+                ignored -> new HashSet<>()
+        ).add(valueType);
     }
 
     public Map<String, Set<ValueType>> snapshot() {

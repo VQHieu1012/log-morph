@@ -75,7 +75,7 @@ public final class CatalogBatchWorker implements AutoCloseable {
             SchemaAggregator aggregator = new SchemaAggregator();
 
             for (TypedLog log : batch) {
-                aggregator.add(observer.observe(log));
+                observer.observeInto(log, aggregator);
             }
 
             var schema = aggregator.snapshot();
