@@ -50,7 +50,13 @@
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>kafka-clients</artifactId>
-            <version>3.4.0</version>
+            <version>4.1.2</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.logmorph</groupId>
+            <artifactId>logmorph-catalog</artifactId>
+            <version>${project.version}</version>
         </dependency>
     </dependencies>
 
