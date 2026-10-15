@@ -1,6 +1,5 @@
 package io.logmorph.catalog;
 
-import io.logmorph.model.SchemaObservation;
 import io.logmorph.model.ValueType;
 import org.junit.jupiter.api.Test;
 
@@ -12,27 +11,25 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class SchemaAggregatorTest {
 
     @Test
-    void shouldMergeObservationsAcrossLogs() {
+    void shouldMergeTypesAcrossLogs() {
         SchemaAggregator aggregator = new SchemaAggregator();
 
-        aggregator.add(Set.of(
-                new SchemaObservation("status", ValueType.STRING),
-                new SchemaObservation("duration", ValueType.NUMBER)
-        ));
+        aggregator.add("status", ValueType.STRING);
+        aggregator.add("duration", ValueType.NUMBER);
 
-        aggregator.add(Set.of(
-                new SchemaObservation("status", ValueType.NUMBER),
-                new SchemaObservation("duration", ValueType.NUMBER)
-        ));
+        aggregator.add("status", ValueType.NUMBER);
+        aggregator.add("duration", ValueType.NUMBER);
 
-        aggregator.add(Set.of(
-                new SchemaObservation("status", ValueType.NULL),
-                new SchemaObservation("success", ValueType.BOOLEAN)
-        ));
+        aggregator.add("status", ValueType.NULL);
+        aggregator.add("success", ValueType.BOOLEAN);
 
         assertEquals(
                 Map.of(
-                        "status", Set.of(ValueType.STRING, ValueType.NUMBER, ValueType.NULL),
+                        "status", Set.of(
+                                ValueType.STRING,
+                                ValueType.NUMBER,
+                                ValueType.NULL
+                        ),
                         "duration", Set.of(ValueType.NUMBER),
                         "success", Set.of(ValueType.BOOLEAN)
                 ),
@@ -41,14 +38,12 @@ class SchemaAggregatorTest {
     }
 
     @Test
-    void shouldIgnoreRepeatedObservations() {
+    void shouldIgnoreRepeatedFieldTypes() {
         SchemaAggregator aggregator = new SchemaAggregator();
 
-        Set<SchemaObservation> observations = Set.of(new SchemaObservation("status", ValueType.STRING));
-
-        aggregator.add(observations);
-        aggregator.add(observations);
-        aggregator.add(observations);
+        aggregator.add("status", ValueType.STRING);
+        aggregator.add("status", ValueType.STRING);
+        aggregator.add("status", ValueType.STRING);
 
         assertEquals(
                 Map.of("status", Set.of(ValueType.STRING)),
@@ -60,11 +55,11 @@ class SchemaAggregatorTest {
     void shouldReturnIndependentSnapshot() {
         SchemaAggregator aggregator = new SchemaAggregator();
 
-        aggregator.add(Set.of(new SchemaObservation("status", ValueType.STRING)));
+        aggregator.add("status", ValueType.STRING);
 
         Map<String, Set<ValueType>> firstSnapshot = aggregator.snapshot();
 
-        aggregator.add(Set.of(new SchemaObservation("status", ValueType.NUMBER)));
+        aggregator.add("status", ValueType.NUMBER);
 
         assertEquals(
                 Set.of(ValueType.STRING),

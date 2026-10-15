@@ -1,6 +1,5 @@
 package io.logmorph.catalog;
 
-import io.logmorph.model.SchemaObservation;
 import io.logmorph.model.ValueType;
 
 import java.util.HashMap;
@@ -9,13 +8,8 @@ import java.util.Map;
 import java.util.Set;
 
 public final class SchemaAggregator {
-    private final Map<String, Set<ValueType>> schema = new HashMap<>();
 
-    public void add(Set<SchemaObservation> observations) {
-        for (SchemaObservation observation : observations) {
-            add(observation.fieldName(), observation.valueType());
-        }
-    }
+    private final Map<String, Set<ValueType>> schema = new HashMap<>();
 
     public void add(String fieldName, ValueType valueType) {
         schema.computeIfAbsent(
@@ -28,7 +22,8 @@ public final class SchemaAggregator {
         Map<String, Set<ValueType>> result = new HashMap<>();
 
         schema.forEach(
-                (fieldName, types) -> result.put(fieldName, Set.copyOf(types))
+                (fieldName, types) ->
+                        result.put(fieldName, Set.copyOf(types))
         );
 
         return Map.copyOf(result);

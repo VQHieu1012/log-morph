@@ -15,6 +15,24 @@ public class SchemaObserverTest {
 
     @Test
     void shouldObserveAllTypesDirectlyIntoAggregator() {
+        SchemaAggregator aggregator = getSchemaAggregator();
+
+        assertEquals(
+                Map.of(
+                        "service", Set.of(ValueType.STRING),
+                        "duration", Set.of(ValueType.NUMBER),
+                        "success", Set.of(ValueType.BOOLEAN),
+                        "error", Set.of(ValueType.NULL),
+                        "tags", Set.of(ValueType.STRING_ARRAY),
+                        "scores", Set.of(ValueType.NUMBER_ARRAY),
+                        "flags", Set.of(ValueType.BOOLEAN_ARRAY),
+                        "items", Set.of(ValueType.JSON_FRAGMENT)
+                ),
+                aggregator.snapshot()
+        );
+    }
+
+    private SchemaAggregator getSchemaAggregator() {
         TypedLog log = new TypedLog(
                 List.of("service"),
                 List.of("payment"),
@@ -45,20 +63,7 @@ public class SchemaObserverTest {
         SchemaAggregator aggregator = new SchemaAggregator();
 
         observer.observeInto(log, aggregator);
-
-        assertEquals(
-                Map.of(
-                        "service", Set.of(ValueType.STRING),
-                        "duration", Set.of(ValueType.NUMBER),
-                        "success", Set.of(ValueType.BOOLEAN),
-                        "error", Set.of(ValueType.NULL),
-                        "tags", Set.of(ValueType.STRING_ARRAY),
-                        "scores", Set.of(ValueType.NUMBER_ARRAY),
-                        "flags", Set.of(ValueType.BOOLEAN_ARRAY),
-                        "items", Set.of(ValueType.JSON_FRAGMENT)
-                ),
-                aggregator.snapshot()
-        );
+        return aggregator;
     }
 
     @Test
