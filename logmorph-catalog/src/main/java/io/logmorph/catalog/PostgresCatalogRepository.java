@@ -23,7 +23,7 @@ public final class PostgresCatalogRepository implements CatalogRepository {
             VALUES (?, ?, ?)
             ON CONFLICT (field_name, value_type)
             DO UPDATE SET
-                observed_at = EXCLUDE.observed_at
+                observed_at = EXCLUDED.observed_at
             WHERE logmorph.schema_catalog.observed_at
                     < EXCLUDED.observed_at
             """;
