@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class CatalogBatchWorker implements AutoCloseable {
-    private final BlockingQueue<List<TypedLog>> queue;
+    private final BlockingQueue<SuccessfulBatch> queue;
     private final SchemaObserver observer;
     private final CatalogRepository repository;
     private final Thread workerThread;
@@ -39,14 +39,21 @@ public final class CatalogBatchWorker implements AutoCloseable {
         this.workerThread.start();
     }
 
-    public boolean submit(List<TypedLog> batch) {
+    public boolean submit(
+            List<TypedLog> batch,
+            Instant observedAt
+    ) {
         Objects.requireNonNull(batch);
+        Objects.requireNonNull(observedAt);
 
         if (batch.isEmpty()) {
             return true;
         }
 
-        if (stopping || !queue.offer(batch)) {
+        SuccessfulBatch successfulBatch =
+                new SuccessfulBatch(batch, observedAt);
+
+        if (stopping || !queue.offer(successfulBatch)) {
             droppedBatches.incrementAndGet();
             return false;
         }
@@ -57,7 +64,7 @@ public final class CatalogBatchWorker implements AutoCloseable {
     private void runLoop() {
         try {
             while (!stopping || !queue.isEmpty()) {
-                List<TypedLog> batch = queue.poll(200, TimeUnit.MILLISECONDS);
+                SuccessfulBatch batch = queue.poll(200, TimeUnit.MILLISECONDS);
 
                 if (batch == null) {
                     continue;
@@ -70,18 +77,18 @@ public final class CatalogBatchWorker implements AutoCloseable {
         }
     }
 
-    private void process(List<TypedLog> batch) {
+    private void process(SuccessfulBatch batch) {
         try {
             SchemaAggregator aggregator = new SchemaAggregator();
 
-            for (TypedLog log : batch) {
-                observer.observeInto(log, aggregator);
+            for (TypedLog log : batch.logs()) {
+                observer.observeInto(log, batch.observedAt(), aggregator);
             }
 
             var schema = aggregator.snapshot();
 
             if (!schema.isEmpty()) {
-                repository.persist(schema, Instant.now());
+                repository.persist(schema);
             }
         } catch (Exception e) {
             persistFailures.incrementAndGet();

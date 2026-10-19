@@ -10,7 +10,6 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 public final class PostgresCatalogRepository implements CatalogRepository {
 
@@ -35,11 +34,9 @@ public final class PostgresCatalogRepository implements CatalogRepository {
 
     @Override
     public void persist(
-            Map<String, Set<ValueType>> schema,
-            Instant observedAt
+            Map<String, Map<ValueType, Instant>> schema
     ) throws SQLException {
         Objects.requireNonNull(schema);
-        Objects.requireNonNull(observedAt);
 
         if (schema.isEmpty()) return;
 
@@ -47,13 +44,11 @@ public final class PostgresCatalogRepository implements CatalogRepository {
             connection.setAutoCommit((false));
 
             try (PreparedStatement statement = connection.prepareStatement(UPSERT_SQL)) {
-                Timestamp timestamp = Timestamp.from(observedAt);
-
-                for (Map.Entry<String, Set<ValueType>> entry : schema.entrySet()) {
-                    for (ValueType valueType : entry.getValue()) {
+                for (Map.Entry<String, Map<ValueType, Instant>> entry : schema.entrySet()) {
+                    for (Map.Entry<ValueType, Instant> observation : entry.getValue().entrySet()) {
                         statement.setString(1, entry.getKey());
-                        statement.setString(2, valueType.name());
-                        statement.setTimestamp(3, timestamp);
+                        statement.setString(2, observation.getKey().name());
+                        statement.setTimestamp(3, Timestamp.from(observation.getValue()));
                         statement.addBatch();
                     }
 

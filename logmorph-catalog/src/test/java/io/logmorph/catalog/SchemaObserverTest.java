@@ -4,9 +4,9 @@ import io.logmorph.model.TypedLog;
 import io.logmorph.model.ValueType;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -15,6 +15,7 @@ public class SchemaObserverTest {
 
     @Test
     void shouldObserveAllTypesDirectlyIntoAggregator() {
+
         TypedLog log = new TypedLog(
                 List.of("service"),
                 List.of("payment"),
@@ -44,18 +45,20 @@ public class SchemaObserverTest {
 
         SchemaAggregator aggregator = new SchemaAggregator();
 
-        observer.observeInto(log, aggregator);
+        Instant observedAt = Instant.parse("2026-10-19T10:00:00Z");
+
+        observer.observeInto(log, observedAt, aggregator);
 
         assertEquals(
                 Map.of(
-                        "service", Set.of(ValueType.STRING),
-                        "duration", Set.of(ValueType.NUMBER),
-                        "success", Set.of(ValueType.BOOLEAN),
-                        "error", Set.of(ValueType.NULL),
-                        "tags", Set.of(ValueType.STRING_ARRAY),
-                        "scores", Set.of(ValueType.NUMBER_ARRAY),
-                        "flags", Set.of(ValueType.BOOLEAN_ARRAY),
-                        "items", Set.of(ValueType.JSON_FRAGMENT)
+                        "service", Map.of(ValueType.STRING, observedAt),
+                        "duration", Map.of(ValueType.NUMBER, observedAt),
+                        "success", Map.of(ValueType.BOOLEAN, observedAt),
+                        "error", Map.of(ValueType.NULL, observedAt),
+                        "tags", Map.of(ValueType.STRING_ARRAY, observedAt),
+                        "scores", Map.of(ValueType.NUMBER_ARRAY, observedAt),
+                        "flags", Map.of(ValueType.BOOLEAN_ARRAY, observedAt),
+                        "items", Map.of(ValueType.JSON_FRAGMENT, observedAt)
                 ),
                 aggregator.snapshot()
         );
@@ -92,12 +95,16 @@ public class SchemaObserverTest {
 
         SchemaAggregator aggregator = new SchemaAggregator();
 
-        observer.observeInto(log, aggregator);
+        Instant observedAt = Instant.parse("2026-10-19T10:00:00Z");
+
+        observer.observeInto(log, observedAt, aggregator);
 
         assertEquals(
                 Map.of(
-                        "status",
-                        Set.of(ValueType.STRING, ValueType.NUMBER)
+                        "status", Map.of(
+                                ValueType.STRING, observedAt,
+                                ValueType.NUMBER, observedAt
+                        )
                 ),
                 aggregator.snapshot()
         );

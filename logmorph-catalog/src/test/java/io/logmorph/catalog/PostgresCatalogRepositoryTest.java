@@ -10,14 +10,13 @@ import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-public class PostgresCatalogRepositoryTest {
+class PostgresCatalogRepositoryTest {
+
     private PostgresCatalogRepository repository;
     private PGSimpleDataSource dataSource;
     private String fieldName;
@@ -26,47 +25,104 @@ public class PostgresCatalogRepositoryTest {
     void setUp() {
         String url = System.getenv("LOGMORPH_TEST_PG_URL");
 
-        assumeTrue(url != null && !url.isBlank());
+        assumeTrue(
+                url != null && !url.isBlank(),
+                "PostgreSQL integration test URL is not configured"
+        );
 
         dataSource = new PGSimpleDataSource();
         dataSource.setURL(url);
-        dataSource.setUser(System.getenv("LOGMORPH_TEST_PG_USER"));
-        dataSource.setPassword(System.getenv("LOGMORPH_TEST_PG_PASSWORD"));
+        dataSource.setUser(
+                System.getenv("LOGMORPH_TEST_PG_USER")
+        );
+        dataSource.setPassword(
+                System.getenv("LOGMORPH_TEST_PG_PASSWORD")
+        );
+
         repository = new PostgresCatalogRepository(dataSource);
         fieldName = "test_" + UUID.randomUUID();
     }
 
     @Test
     void shouldInsertDistinctTypesForSameField() throws Exception {
-        Instant observedAt = Instant.parse("2026-10-16T12:00:00Z");
+        Instant observedAt =
+                Instant.parse("2026-10-19T10:00:00Z");
 
         repository.persist(
-                Map.of("status_" + fieldName,
-                        Set.of(ValueType.STRING, ValueType.NUMBER)),
-                observedAt
+                Map.of(
+                        fieldName,
+                        Map.of(
+                                ValueType.STRING, observedAt,
+                                ValueType.NUMBER, observedAt
+                        )
+                )
         );
 
         assertEquals(
                 observedAt,
-                readObservedAt("status_" + fieldName, ValueType.STRING)
+                readObservedAt(fieldName, ValueType.STRING)
         );
 
         assertEquals(
                 observedAt,
-                readObservedAt("status_" + fieldName, ValueType.NUMBER)
+                readObservedAt(fieldName, ValueType.NUMBER)
+        );
+
+        assertEquals(2, countRows(fieldName));
+    }
+
+    @Test
+    void shouldPersistDifferentTimestampsForEachFieldType()
+            throws Exception {
+
+        Instant stringObservedAt =
+                Instant.parse("2026-10-19T10:00:00Z");
+
+        Instant numberObservedAt =
+                Instant.parse("2026-10-19T10:05:00Z");
+
+        repository.persist(
+                Map.of(
+                        fieldName,
+                        Map.of(
+                                ValueType.STRING, stringObservedAt,
+                                ValueType.NUMBER, numberObservedAt
+                        )
+                )
+        );
+
+        assertEquals(
+                stringObservedAt,
+                readObservedAt(fieldName, ValueType.STRING)
+        );
+
+        assertEquals(
+                numberObservedAt,
+                readObservedAt(fieldName, ValueType.NUMBER)
         );
     }
 
     @Test
     void shouldNotMoveObservedAtBackwards() throws Exception {
-        Instant newer = Instant.parse("2026-10-16T12:10:00Z");
-        Instant older = Instant.parse("2026-10-16T12:00:00Z");
+        Instant newer =
+                Instant.parse("2026-10-19T10:10:00Z");
 
-        Map<String, Set<ValueType>> schema =
-                Map.of(fieldName, Set.of(ValueType.STRING));
+        Instant older =
+                Instant.parse("2026-10-19T10:00:00Z");
 
-        repository.persist(schema, newer);
-        repository.persist(schema, older);
+        repository.persist(
+                Map.of(
+                        fieldName,
+                        Map.of(ValueType.STRING, newer)
+                )
+        );
+
+        repository.persist(
+                Map.of(
+                        fieldName,
+                        Map.of(ValueType.STRING, older)
+                )
+        );
 
         assertEquals(
                 newer,
@@ -75,15 +131,28 @@ public class PostgresCatalogRepositoryTest {
     }
 
     @Test
-    void shouldUpdateObservedAtForNewerObservation() throws Exception {
-        Instant older = Instant.parse("2026-10-16T12:00:00Z");
-        Instant newer = Instant.parse("2026-10-16T12:10:00Z");
+    void shouldUpdateObservedAtForNewerObservation()
+            throws Exception {
 
-        Map<String, Set<ValueType>> schema =
-                Map.of(fieldName, Set.of(ValueType.STRING));
+        Instant older =
+                Instant.parse("2026-10-19T10:00:00Z");
 
-        repository.persist(schema, older);
-        repository.persist(schema, newer);
+        Instant newer =
+                Instant.parse("2026-10-19T10:10:00Z");
+
+        repository.persist(
+                Map.of(
+                        fieldName,
+                        Map.of(ValueType.STRING, older)
+                )
+        );
+
+        repository.persist(
+                Map.of(
+                        fieldName,
+                        Map.of(ValueType.STRING, newer)
+                )
+        );
 
         assertEquals(
                 newer,
@@ -92,31 +161,106 @@ public class PostgresCatalogRepositoryTest {
     }
 
     @Test
-    void shouldBeIdempotentForRepeatedObservations() throws Exception {
-        Instant observedAt = Instant.parse("2026-10-16T12:00:00Z");
+    void shouldBeIdempotentForRepeatedObservations()
+            throws Exception {
 
-        Map<String, Set<ValueType>> schema =
-                Map.of(fieldName, Set.of(ValueType.STRING));
+        Instant observedAt =
+                Instant.parse("2026-10-19T10:00:00Z");
 
-        repository.persist(schema, observedAt);
-        repository.persist(schema, observedAt);
+        Map<String, Map<ValueType, Instant>> schema =
+                Map.of(
+                        fieldName,
+                        Map.of(ValueType.STRING, observedAt)
+                );
 
-        try (Connection connection = dataSource.getConnection();
-             var statement = connection.prepareStatement("""
-                     SELECT count(*)
-                     FROM logmorph.schema_catalog
-                     WHERE field_name = ?
-                       AND value_type = ?
-                     """)) {
+        repository.persist(schema);
+        repository.persist(schema);
+        repository.persist(schema);
 
-            statement.setString(1, fieldName);
-            statement.setString(2, ValueType.STRING.name());
+        assertEquals(1, countRows(fieldName));
 
-            try (ResultSet result = statement.executeQuery()) {
-                assertTrue(result.next());
-                assertEquals(1, result.getLong(1));
-            }
-        }
+        assertEquals(
+                observedAt,
+                readObservedAt(fieldName, ValueType.STRING)
+        );
+    }
+
+    @Test
+    void shouldPersistMultipleFieldsInSingleCall()
+            throws Exception {
+
+        Instant t1 =
+                Instant.parse("2026-10-19T10:00:00Z");
+
+        Instant t2 =
+                Instant.parse("2026-10-19T10:05:00Z");
+
+        String statusField = fieldName + "_status";
+        String durationField = fieldName + "_duration";
+
+        repository.persist(
+                Map.of(
+                        statusField,
+                        Map.of(
+                                ValueType.STRING, t1,
+                                ValueType.NUMBER, t2
+                        ),
+                        durationField,
+                        Map.of(ValueType.NUMBER, t1)
+                )
+        );
+
+        assertEquals(
+                t1,
+                readObservedAt(statusField, ValueType.STRING)
+        );
+
+        assertEquals(
+                t2,
+                readObservedAt(statusField, ValueType.NUMBER)
+        );
+
+        assertEquals(
+                t1,
+                readObservedAt(durationField, ValueType.NUMBER)
+        );
+
+        assertEquals(2, countRows(statusField));
+        assertEquals(1, countRows(durationField));
+    }
+
+    @Test
+    void shouldRollbackAllRowsWhenBatchContainsInvalidData()
+            throws Exception {
+
+        Instant observedAt =
+                Instant.parse("2026-10-19T10:00:00Z");
+
+        String validField = fieldName + "_valid";
+
+        // VARCHAR(32) value_type constraint:
+        // Use a valid field but force an invalid value through SQL
+        // would require changing production code.
+        //
+        // Instead, use a field name containing a null character.
+        // PostgreSQL TEXT rejects embedded NUL characters.
+
+        String invalidField = fieldName + "\u0000invalid";
+
+        Map<String, Map<ValueType, Instant>> schema =
+                Map.of(
+                        validField,
+                        Map.of(ValueType.STRING, observedAt),
+                        invalidField,
+                        Map.of(ValueType.NUMBER, observedAt)
+                );
+
+        assertThrows(
+                Exception.class,
+                () -> repository.persist(schema)
+        );
+
+        assertEquals(0, countRows(validField));
     }
 
     private Instant readObservedAt(
@@ -136,7 +280,10 @@ public class PostgresCatalogRepositoryTest {
             statement.setString(2, valueType.name());
 
             try (ResultSet result = statement.executeQuery()) {
-                assertTrue(result.next());
+                assertTrue(
+                        result.next(),
+                        "Expected observation was not persisted"
+                );
 
                 Timestamp timestamp =
                         result.getTimestamp("observed_at");
@@ -146,5 +293,20 @@ public class PostgresCatalogRepositoryTest {
         }
     }
 
+    private long countRows(String name) throws Exception {
+        try (Connection connection = dataSource.getConnection();
+             var statement = connection.prepareStatement("""
+                     SELECT COUNT(*)
+                     FROM logmorph.schema_catalog
+                     WHERE field_name = ?
+                     """)) {
 
+            statement.setString(1, name);
+
+            try (ResultSet result = statement.executeQuery()) {
+                assertTrue(result.next());
+                return result.getLong(1);
+            }
+        }
+    }
 }

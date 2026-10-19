@@ -4,12 +4,10 @@ import io.logmorph.model.ValueType;
 
 import java.time.Instant;
 import java.util.Map;
-import java.util.Set;
 
 public interface CatalogRepository {
 
     void persist(
-            Map<String, Set<ValueType>> schema,
-            Instant observedAt
+            Map<String, Map<ValueType, Instant>> schema
     ) throws Exception;
 }

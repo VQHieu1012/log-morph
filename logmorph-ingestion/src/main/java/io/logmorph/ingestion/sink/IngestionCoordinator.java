@@ -6,6 +6,7 @@ import io.logmorph.ingestion.parser.JacksonLogParser;
 import io.logmorph.model.TypedLog;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ExecutionException;
@@ -67,7 +68,7 @@ public final class IngestionCoordinator {
         writer.write(pendingBatch);
 
         if (catalogWorker != null) {
-            catalogWorker.submit(pendingBatch);
+            catalogWorker.submit(pendingBatch, Instant.now());
         }
 
         pendingBatch = null;

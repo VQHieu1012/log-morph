@@ -3,51 +3,51 @@ package io.logmorph.catalog;
 import io.logmorph.model.ValueType;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.Map;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class SchemaAggregatorTest {
 
     @Test
-    void shouldMergeTypesAcrossLogs() {
+    void shouldMergeTypesWithTheirObservedTimestamps() {
         SchemaAggregator aggregator = new SchemaAggregator();
 
-        aggregator.add("status", ValueType.STRING);
-        aggregator.add("duration", ValueType.NUMBER);
+        Instant t1 = Instant.parse("2026-10-19T10:00:00Z");
+        Instant t2 = Instant.parse("2026-10-19T10:05:00Z");
 
-        aggregator.add("status", ValueType.NUMBER);
-        aggregator.add("duration", ValueType.NUMBER);
-
-        aggregator.add("status", ValueType.NULL);
-        aggregator.add("success", ValueType.BOOLEAN);
+        aggregator.add("status", ValueType.STRING, t1);
+        aggregator.add("status", ValueType.NUMBER, t2);
+        aggregator.add("duration", ValueType.NUMBER, t1);
 
         assertEquals(
                 Map.of(
-                        "status", Set.of(
-                                ValueType.STRING,
-                                ValueType.NUMBER,
-                                ValueType.NULL
+                        "status", Map.of(
+                                ValueType.STRING, t1,
+                                ValueType.NUMBER, t2
                         ),
-                        "duration", Set.of(ValueType.NUMBER),
-                        "success", Set.of(ValueType.BOOLEAN)
+                        "duration", Map.of(ValueType.NUMBER, t1)
                 ),
                 aggregator.snapshot()
         );
     }
 
     @Test
-    void shouldIgnoreRepeatedFieldTypes() {
+    void shouldKeepLatestTimestampRegardlessOfArrivalOrder() {
         SchemaAggregator aggregator = new SchemaAggregator();
 
-        aggregator.add("status", ValueType.STRING);
-        aggregator.add("status", ValueType.STRING);
-        aggregator.add("status", ValueType.STRING);
+        Instant older = Instant.parse("2026-10-19T10:00:00Z");
+        Instant newer = Instant.parse("2026-10-19T10:10:00Z");
+
+        aggregator.add("status", ValueType.STRING, newer);
+        aggregator.add("status", ValueType.STRING, older);
 
         assertEquals(
-                Map.of("status", Set.of(ValueType.STRING)),
+                newer,
                 aggregator.snapshot()
+                        .get("status")
+                        .get(ValueType.STRING)
         );
     }
 
@@ -55,20 +55,26 @@ class SchemaAggregatorTest {
     void shouldReturnIndependentSnapshot() {
         SchemaAggregator aggregator = new SchemaAggregator();
 
-        aggregator.add("status", ValueType.STRING);
+        Instant t1 = Instant.parse("2026-10-19T10:00:00Z");
+        Instant t2 = Instant.parse("2026-10-19T10:10:00Z");
 
-        Map<String, Set<ValueType>> firstSnapshot = aggregator.snapshot();
+        aggregator.add("status", ValueType.STRING, t1);
 
-        aggregator.add("status", ValueType.NUMBER);
+        Map<String, Map<ValueType, Instant>> firstSnapshot =
+                aggregator.snapshot();
+
+        aggregator.add("status", ValueType.STRING, t2);
 
         assertEquals(
-                Set.of(ValueType.STRING),
-                firstSnapshot.get("status")
+                t1,
+                firstSnapshot.get("status").get(ValueType.STRING)
         );
 
         assertEquals(
-                Set.of(ValueType.STRING, ValueType.NUMBER),
-                aggregator.snapshot().get("status")
+                t2,
+                aggregator.snapshot()
+                        .get("status")
+                        .get(ValueType.STRING)
         );
     }
 }
