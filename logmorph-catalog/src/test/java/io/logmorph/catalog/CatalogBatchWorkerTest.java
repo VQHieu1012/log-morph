@@ -4,6 +4,7 @@ import io.logmorph.model.TypedLog;
 import io.logmorph.model.ValueType;
 import org.junit.jupiter.api.Test;
 
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -149,6 +150,65 @@ class CatalogBatchWorkerTest {
                     ),
                     lastSchema.get()
             );
+        }
+    }
+
+    @Test
+    void shouldRetryFailedPersistenceAfterFlushInterval() {
+        Instant observedAt = Instant.parse("2026-10-20T10:00:00Z");
+
+        AtomicInteger persistAttempts = new AtomicInteger();
+
+        CountDownLatch firstAttemptFailed = new CountDownLatch(1);
+        CountDownLatch retrySucceeded = new CountDownLatch(1);
+
+        AtomicReference<Map<String, Map<ValueType, Instant>>> persistedSchema = new AtomicReference<>();
+
+        CatalogRepository repository = schema -> {
+            int attempt = persistAttempts.incrementAndGet();
+
+            if (attempt == 1) {
+                firstAttemptFailed.countDown();
+                throw new SQLException("Simulated PostgeSQL failure");
+            }
+
+            persistedSchema.set(schema);
+            retrySucceeded.countDown();
+        };
+
+        try (CatalogBatchWorker worker = new CatalogBatchWorker(
+                new SchemaObserver(),
+                repository,
+                4,
+                1,
+                Duration.ofMillis(300)
+        )) {
+            assertTrue(worker.submit(
+                    List.of(createLog("status", "ok")),
+                    observedAt
+            ));
+
+            assertTrue(
+                    firstAttemptFailed.await(5, TimeUnit.SECONDS),
+                    "First persistence attempt did not execute"
+            );
+
+            assertTrue(
+                    retrySucceeded.await(5, TimeUnit.SECONDS),
+                    "Worker did not retry persistence"
+            );
+
+            assertEquals(
+                    Map.of(
+                            "status",
+                            Map.of(ValueType.STRING, observedAt)
+                    ),
+                    persistedSchema.get()
+            );
+
+            assertEquals(2, persistAttempts.get());
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
     }
 }
