@@ -14,8 +14,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 class CatalogBatchWorkerTest {
 
@@ -209,6 +208,148 @@ class CatalogBatchWorkerTest {
             assertEquals(2, persistAttempts.get());
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    @Test
+    void shouldFlushPendingSchemaOnClose() throws Exception {
+        Instant observedAt = Instant.parse("2026-10-20T10:00:00Z");
+
+        AtomicInteger persistCalls = new AtomicInteger();
+
+        AtomicReference<Map<String, Map<ValueType, Instant>>> persistedSchema =
+                new AtomicReference<>();
+
+        CatalogRepository repository = schema -> {
+            persistedSchema.set(schema);
+            persistCalls.incrementAndGet();
+        };
+
+        CatalogBatchWorker worker = new CatalogBatchWorker(
+                new SchemaObserver(),
+                repository,
+                4,
+                100,
+                Duration.ofSeconds(30)
+        );
+
+        assertTrue(worker.submit(
+                List.of(createLog("status", "ok")),
+                observedAt
+        ));
+
+        worker.close();
+
+        assertEquals(1, persistCalls.get());
+
+        assertEquals(
+                Map.of(
+                        "status",
+                        Map.of(ValueType.STRING, observedAt)
+                ),
+                persistedSchema.get()
+        );
+    }
+
+    @Test
+    void shouldRejectSubmissionAfterClose() throws Exception {
+        AtomicInteger persistCalls = new AtomicInteger();
+
+        CatalogRepository repository;
+        repository = schema -> {
+            persistCalls.incrementAndGet();
+        };
+
+        CatalogBatchWorker worker = new CatalogBatchWorker(
+                new SchemaObserver(),
+                repository,
+                4,
+                100,
+                Duration.ofSeconds(30)
+        );
+
+        worker.close();
+
+        boolean accepted = worker.submit(
+                List.of(createLog("status", "ok")),
+                Instant.parse("2026-10-20T10:00:00Z")
+        );
+
+        assertFalse(accepted);
+        assertEquals(0, persistCalls.get());
+        assertEquals(1, worker.droppedBatches());
+    }
+
+    @Test
+    void shouldNotLoseAcceptedBatchDuringConcurrentClose()
+            throws Exception {
+
+        AtomicInteger persistCalls = new AtomicInteger();
+
+        CatalogRepository repository = schema -> {
+            persistCalls.incrementAndGet();
+        };
+
+        CatalogBatchWorker worker = new CatalogBatchWorker(
+                new SchemaObserver(),
+                repository,
+                4,
+                100,
+                Duration.ofSeconds(30)
+        );
+
+        CountDownLatch start = new CountDownLatch(1);
+
+        AtomicReference<Boolean> accepted = new AtomicReference<>();
+
+        Thread submitThread = new Thread(() -> {
+            try {
+                start.await();
+
+                accepted.set(worker.submit(
+                        List.of(createLog("status", "ok")),
+                        Instant.parse("2026-10-20T10:00:00Z")
+                ));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        Thread closeThread = new Thread(() -> {
+            try {
+                start.await();
+                worker.close();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        submitThread.start();
+        closeThread.start();
+
+        // Cho phép hai threads bắt đầu cạnh tranh lock.
+        start.countDown();
+
+        submitThread.join(5000);
+        closeThread.join(5000);
+
+        assertFalse(submitThread.isAlive());
+        assertFalse(closeThread.isAlive());
+
+        assertNotNull(accepted.get());
+
+        if (accepted.get()) {
+            assertEquals(
+                    1,
+                    persistCalls.get(),
+                    "Accepted batch must be persisted before worker exits"
+            );
+        } else {
+            assertEquals(
+                    0,
+                    persistCalls.get(),
+                    "Rejected batch must not be persisted"
+            );
         }
     }
 }
