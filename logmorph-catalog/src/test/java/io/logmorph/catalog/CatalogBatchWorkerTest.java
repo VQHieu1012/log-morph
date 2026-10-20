@@ -1,15 +1,16 @@
-
 package io.logmorph.catalog;
 
 import io.logmorph.model.TypedLog;
 import io.logmorph.model.ValueType;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -46,125 +47,107 @@ class CatalogBatchWorkerTest {
         );
     }
 
+
     @Test
-    void shouldAggregateAndPersistBatchAsynchronously()
-            throws Exception {
-
-        Instant observedAt =
-                Instant.parse("2026-10-19T10:00:00Z");
-
-        CountDownLatch persisted = new CountDownLatch(1);
-
-        AtomicReference<Map<String, Map<ValueType, Instant>>> actualSchema =
-                new AtomicReference<>();
+    void shouldFlushWhenBatchThresholdReached() throws Exception {
+        CountDownLatch flushed = new CountDownLatch(1);
+        AtomicInteger persistCalls = new AtomicInteger();
 
         CatalogRepository repository = schema -> {
-            actualSchema.set(schema);
-            persisted.countDown();
+            persistCalls.incrementAndGet();
+            flushed.countDown();
         };
 
         try (CatalogBatchWorker worker = new CatalogBatchWorker(
                 new SchemaObserver(),
                 repository,
-                4
+                4,
+                2,
+                Duration.ofSeconds(30)
         )) {
-            List<TypedLog> batch = List.of(
-                    createLog("service", "payment"),
-                    createLog("service", "checkout"),
-                    createLog("status", "ok")
-            );
+            Instant t = Instant.parse("2026-10-19T10:00:00Z");
 
-            assertTrue(worker.submit(batch, observedAt));
+            assertTrue(worker.submit(
+                    List.of(createLog("service", "payment")), t
+            ));
 
-            assertTrue(
-                    persisted.await(5, TimeUnit.SECONDS),
-                    "Catalog worker did not persist the batch"
-            );
+            assertTrue(worker.submit(
+                    List.of(createLog("status", "ok")), t
+            ));
 
-            assertEquals(
-                    Map.of(
-                            "service", Map.of(
-                                    ValueType.STRING, observedAt
-                            ),
-                            "status", Map.of(
-                                    ValueType.STRING, observedAt
-                            )
-                    ),
-                    actualSchema.get()
-            );
-
-            assertEquals(0, worker.droppedBatches());
-            assertEquals(0, worker.persistFailures());
+            assertTrue(flushed.await(5, TimeUnit.SECONDS));
+            assertEquals(1, persistCalls.get());
         }
     }
 
     @Test
-    void shouldContinueWhenRepositoryFails() throws Exception {
-        CountDownLatch attempted = new CountDownLatch(1);
+    void shouldFlushWhenIntervalElapsedWithoutNewBatches()
+            throws Exception {
 
-        CatalogRepository repository = schema -> {
-            attempted.countDown();
-            throw new IllegalStateException(
-                    "Simulated catalog failure"
-            );
-        };
+        CountDownLatch flushed = new CountDownLatch(1);
 
-        Instant observedAt =
-                Instant.parse("2026-10-19T10:00:00Z");
+        CatalogRepository repository = schema ->
+                flushed.countDown();
 
         try (CatalogBatchWorker worker = new CatalogBatchWorker(
                 new SchemaObserver(),
                 repository,
-                4
+                4,
+                100,
+                Duration.ofMillis(300)
         )) {
             assertTrue(worker.submit(
                     List.of(createLog("service", "payment")),
-                    observedAt
+                    Instant.parse("2026-10-19T10:00:00Z")
             ));
 
-            assertTrue(attempted.await(5, TimeUnit.SECONDS));
+            assertTrue(
+                    flushed.await(5, TimeUnit.SECONDS),
+                    "Time-based flush did not execute"
+            );
         }
-
-        // close() đợi worker hoàn tất xử lý queue.
-        // Lỗi repository không được propagate sang ingestion thread.
     }
 
     @Test
-    void shouldPreserveObservedAtFromSuccessfulBatch()
+    void shouldRetainSchemaAcrossSuccessfulFlushes()
             throws Exception {
 
-        Instant batchObservedAt =
-                Instant.parse("2026-10-19T09:30:00Z");
+        CountDownLatch flushed = new CountDownLatch(2);
 
-        CountDownLatch persisted = new CountDownLatch(1);
-
-        AtomicReference<Map<String, Map<ValueType, Instant>>> actualSchema =
+        AtomicReference<Map<String, Map<ValueType, Instant>>> lastSchema =
                 new AtomicReference<>();
 
         CatalogRepository repository = schema -> {
-            actualSchema.set(schema);
-            persisted.countDown();
+            lastSchema.set(schema);
+            flushed.countDown();
         };
 
         try (CatalogBatchWorker worker = new CatalogBatchWorker(
                 new SchemaObserver(),
                 repository,
-                4
+                4,
+                1,
+                Duration.ofSeconds(30)
         )) {
+            Instant t1 = Instant.parse("2026-10-19T10:00:00Z");
+            Instant t2 = Instant.parse("2026-10-19T10:05:00Z");
+
             assertTrue(worker.submit(
-                    List.of(createLog("status", "success")),
-                    batchObservedAt
+                    List.of(createLog("service", "payment")), t1
             ));
 
-            assertTrue(
-                    persisted.await(5, TimeUnit.SECONDS)
-            );
+            assertTrue(worker.submit(
+                    List.of(createLog("status", "ok")), t2
+            ));
+
+            assertTrue(flushed.await(5, TimeUnit.SECONDS));
 
             assertEquals(
-                    batchObservedAt,
-                    actualSchema.get()
-                            .get("status")
-                            .get(ValueType.STRING)
+                    Map.of(
+                            "service", Map.of(ValueType.STRING, t1),
+                            "status", Map.of(ValueType.STRING, t2)
+                    ),
+                    lastSchema.get()
             );
         }
     }
