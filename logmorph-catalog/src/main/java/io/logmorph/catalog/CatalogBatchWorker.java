@@ -71,7 +71,7 @@ public final class CatalogBatchWorker implements AutoCloseable {
         this.workerThread.start();
     }
 
-    public boolean submit(
+    public synchronized boolean submit(
             List<TypedLog> batch,
             Instant observedAt
     ) {
@@ -164,7 +164,9 @@ public final class CatalogBatchWorker implements AutoCloseable {
 
     @Override
     public void close() throws InterruptedException {
-        stopping = true;
+        synchronized (this) {
+            stopping = true;
+        }
         workerThread.join();
     }
 }
