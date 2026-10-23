@@ -1,6 +1,9 @@
 package io.logmorph.ingestion;
 
 import com.clickhouse.client.api.Client;
+import io.logmorph.catalog.CatalogBatchWorker;
+import io.logmorph.catalog.PostgresCatalogRepository;
+import io.logmorph.catalog.SchemaObserver;
 import io.logmorph.ingestion.batch.BatchAccumulator;
 import io.logmorph.ingestion.kafka.KafkaIngestionConsumer;
 import io.logmorph.ingestion.parser.JacksonLogParser;
@@ -9,6 +12,7 @@ import io.logmorph.ingestion.sink.IngestionCoordinator;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.postgresql.ds.PGSimpleDataSource;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -81,14 +85,20 @@ public final class LogMorphApplication {
                         )
                         .serverSetting("async_insert", "0")
                         .build();
-                KafkaConsumer<String, String> consumer = new KafkaConsumer<>(kafkaProperties)
+                KafkaConsumer<String, String> consumer = new KafkaConsumer<>(kafkaProperties);
+                CatalogBatchWorker catalogWorker = createCatalogWorker()
         ) {
             JacksonLogParser parser = new JacksonLogParser();
             BatchAccumulator accumulator = new BatchAccumulator(BATCH_SIZE);
 
             ClickHouseBatchWriter writer = new ClickHouseBatchWriter(client, "logmorph.logs");
 
-            IngestionCoordinator coordinator = new IngestionCoordinator(parser, accumulator, writer);
+            IngestionCoordinator coordinator = new IngestionCoordinator(
+                    parser,
+                    accumulator,
+                    writer,
+                    catalogWorker
+            );
 
             KafkaIngestionConsumer ingestion = new KafkaIngestionConsumer(
                     consumer, coordinator, POLL_TIMEOUT
@@ -110,5 +120,31 @@ public final class LogMorphApplication {
         }
 
         return value;
+    }
+
+    public static CatalogBatchWorker createCatalogWorker() {
+        boolean enabled = Boolean.parseBoolean(
+                System.getenv().getOrDefault(
+                        "CATALOG_ENABLED", "false"
+                )
+        );
+
+        if (!enabled) {
+            return null;
+        }
+
+        PGSimpleDataSource dataSource = new PGSimpleDataSource();
+
+        dataSource.setURL(requireEnv("POSTGRES_URL"));
+        dataSource.setUser(requireEnv("POSTGRES_USER"));
+        dataSource.setPassword(requireEnv("POSTGRES_PASSWORD"));
+
+        return new CatalogBatchWorker(
+                new SchemaObserver(),
+                new PostgresCatalogRepository(dataSource),
+                4,
+                100,
+                Duration.ofSeconds(30)
+        );
     }
 }
