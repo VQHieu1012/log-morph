@@ -117,11 +117,22 @@ public final class CatalogBatchWorker implements AutoCloseable {
 
     private void process(SuccessfulBatch batch) {
         for (TypedLog log : batch.logs()) {
-            observer.observeInto(log, batch.observedAt(), aggregator);
+            observer.observeInto(
+                    log,
+                    batch.observedAt(),
+                    aggregator
+            );
         }
 
         batchesSinceFlush++;
-        dirty = true;
+
+        if (!aggregator.hasPendingDiscovery()) return;
+
+
+        if (!dirty) {
+            dirty = true;
+            flush();
+        }
     }
 
     private boolean shouldFlush() {
@@ -138,15 +149,21 @@ public final class CatalogBatchWorker implements AutoCloseable {
         lastFlushAttemptNanos = System.nanoTime();
         batchesSinceFlush = 0;
 
+        if (!aggregator.hasPendingDiscovery()) {
+            dirty = false;
+            return;
+        }
+
         try {
-            repository.persist(aggregator.snapshot());
+            repository.persistDiscovery(aggregator.discoverySnapshot());
+
+            aggregator.markDiscoveryPersisted();
             dirty = false;
         } catch (Exception e) {
             persistFailures.incrementAndGet();
             dirty = true;
-            System.err.println(
-                    "Catalog flush failed: " + e
-            );
+
+            System.err.println("Catalog discovery flush failed: " + e);
         }
     }
 

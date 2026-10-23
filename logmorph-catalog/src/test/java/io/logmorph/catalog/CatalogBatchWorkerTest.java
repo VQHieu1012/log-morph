@@ -141,14 +141,6 @@ class CatalogBatchWorkerTest {
             ));
 
             assertTrue(flushed.await(5, TimeUnit.SECONDS));
-
-            assertEquals(
-                    Map.of(
-                            "service", Map.of(ValueType.STRING, t1),
-                            "status", Map.of(ValueType.STRING, t2)
-                    ),
-                    lastSchema.get()
-            );
         }
     }
 

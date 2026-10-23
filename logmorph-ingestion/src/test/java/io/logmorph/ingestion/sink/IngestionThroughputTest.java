@@ -25,6 +25,9 @@ class IngestionThroughputTest {
     private static final int BATCH_SIZE = 5_000;
     private static final int WARMUP_COUNT = 2_000;
 
+    private static final int FIELD_CARDINALITY =
+            Integer.getInteger("logmorph.bench.cardinality", 1);
+
     private Client createClient() {
         return new Client.Builder()
                 .addEndpoint("http://localhost:8123")
@@ -40,6 +43,8 @@ class IngestionThroughputTest {
     }
 
     private String generateMessage(String marker, int sequence) {
+        int fieldIndex = sequence % FIELD_CARDINALITY;
+
         return """
                 {
                   "bench_marker": "%s",
@@ -48,6 +53,7 @@ class IngestionThroughputTest {
                   "event": "checkout",
                   "amount": 125.75,
                   "success": true,
+                  "dynamic_field_%d": 100,
                   "tags": ["api", "payment", "production"],
                   "scores": [10.5, 20.25, 30.75],
                   "metadata": {
@@ -55,7 +61,7 @@ class IngestionThroughputTest {
                     "host": "worker-01"
                   }
                 }
-                """.formatted(marker, sequence);
+                """.formatted(marker, sequence, fieldIndex);
     }
 
     private CatalogBatchWorker createCatalogWorker() {
@@ -203,26 +209,28 @@ class IngestionThroughputTest {
                     """
                             
                             ========= LOGMORPH BENCHMARK =========
-                            Catalog enabled : %s
-                            Messages        : %,d
-                            Batch size      : %,d
-                            INSERT count    : %,d
-                            Total JSON      : %.2f MiB
-                            Elapsed time    : %.3f seconds
-                            Throughput      : %,.0f messages/sec
-                            JSON throughput : %.2f MiB/sec
-                            Average latency : %.3f us/message
-                            Verified rows   : %,d
+                            Catalog enabled  : %s
+                            Messages         : %,d
+                            Batch size       : %,d
+                            Field cardinality: %,d
+                            INSERT count     : %,d
+                            Total JSON       : %.2f MiB
+                            Elapsed time     : %.3f seconds
+                            Throughput       : %,.0f messages/sec
+                            JSON throughput  : %.2f MiB/sec
+                            Average latency  : %.3f us/message
+                            Verified rows    : %,d
                             
-                            Catalog drain   : %.3f seconds
-                            Dropped batches : %,d
-                            Persist failures: %,d
+                            Catalog drain    : %.3f seconds
+                            Dropped batches  : %,d
+                            Persist failures : %,d
                             ======================================
                             
                             """,
                     catalogEnabled,
                     MESSAGE_COUNT,
                     BATCH_SIZE,
+                    FIELD_CARDINALITY,
                     (MESSAGE_COUNT + BATCH_SIZE - 1) / BATCH_SIZE,
                     payloadMiB,
                     seconds,
