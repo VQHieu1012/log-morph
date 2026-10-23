@@ -1,9 +1,14 @@
+
 package io.logmorph.ingestion.sink;
 
 import com.clickhouse.client.api.Client;
+import io.logmorph.catalog.CatalogBatchWorker;
+import io.logmorph.catalog.PostgresCatalogRepository;
+import io.logmorph.catalog.SchemaObserver;
 import io.logmorph.ingestion.batch.BatchAccumulator;
 import io.logmorph.ingestion.parser.JacksonLogParser;
 import org.junit.jupiter.api.Test;
+import org.postgresql.ds.PGSimpleDataSource;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
@@ -13,9 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class IngestionThroughputTest {
+
     private static final String TABLE = "logmorph.logs";
-    private static final int MESSAGE_COUNT = 100_000;
-    private static final int BATCH_SIZE = 10_000;
+
+    private static final int MESSAGE_COUNT = 1_000_000;
+    private static final int BATCH_SIZE = 5_000;
     private static final int WARMUP_COUNT = 2_000;
 
     private Client createClient() {
@@ -51,14 +58,32 @@ class IngestionThroughputTest {
                 """.formatted(marker, sequence);
     }
 
-    private IngestionCoordinator createCoordinator(
-            ClickHouseBatchWriter writer
-    ) {
-        return new IngestionCoordinator(
-                new JacksonLogParser(),
-                new BatchAccumulator(BATCH_SIZE),
-                writer
+    private CatalogBatchWorker createCatalogWorker() {
+        PGSimpleDataSource dataSource = new PGSimpleDataSource();
+
+        dataSource.setURL(requireEnv("POSTGRES_URL"));
+        dataSource.setUser(requireEnv("POSTGRES_USER"));
+        dataSource.setPassword(requireEnv("POSTGRES_PASSWORD"));
+
+        return new CatalogBatchWorker(
+                new SchemaObserver(),
+                new PostgresCatalogRepository(dataSource),
+                16,
+                100,
+                java.time.Duration.ofSeconds(30)
         );
+    }
+
+    private String requireEnv(String name) {
+        String value = System.getenv(name);
+
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Missing environment variable: " + name
+            );
+        }
+
+        return value;
     }
 
     private long countByMarker(Client client, String marker) {
@@ -68,7 +93,9 @@ class IngestionThroughputTest {
                 WHERE has(string_values, '%s')
                 """.formatted(marker);
 
-        return client.queryAll(sql).get(0).getLong("total");
+        return client.queryAll(sql)
+                .get(0)
+                .getLong("total");
     }
 
     @Test
@@ -78,6 +105,10 @@ class IngestionThroughputTest {
                 "Enable with -Dlogmorph.bench=true"
         );
 
+        boolean catalogEnabled = Boolean.getBoolean(
+                "logmorph.bench.catalog"
+        );
+
         String warmupMarker = UUID.randomUUID().toString();
         String benchmarkMarker = UUID.randomUUID().toString();
 
@@ -85,8 +116,12 @@ class IngestionThroughputTest {
             ClickHouseBatchWriter writer =
                     new ClickHouseBatchWriter(client, TABLE);
 
-            // Warm-up: không tính vào throughput.
-            IngestionCoordinator warmup = createCoordinator(writer);
+            // Warm-up: not included in the benchmark.
+            IngestionCoordinator warmup = new IngestionCoordinator(
+                    new JacksonLogParser(),
+                    new BatchAccumulator(BATCH_SIZE),
+                    writer
+            );
 
             for (int i = 0; i < WARMUP_COUNT; i++) {
                 warmup.accept(generateMessage(warmupMarker, i));
@@ -94,43 +129,81 @@ class IngestionThroughputTest {
 
             warmup.flush();
 
-            // Benchmark thực tế.
-            IngestionCoordinator coordinator = createCoordinator(writer);
+            CatalogBatchWorker catalogWorker =
+                    catalogEnabled ? createCatalogWorker() : null;
 
             long totalPayloadBytes = 0;
+            long elapsedNanos;
+            long catalogDrainNanos = 0;
 
-            long start = System.nanoTime();
+            long droppedBatches = 0;
+            long persistFailures = 0;
 
-            for (int i = 0; i < MESSAGE_COUNT; i++) {
-                String json = generateMessage(benchmarkMarker, i);
+            try {
+                IngestionCoordinator coordinator =
+                        new IngestionCoordinator(
+                                new JacksonLogParser(),
+                                new BatchAccumulator(BATCH_SIZE),
+                                writer,
+                                catalogWorker
+                        );
 
-                totalPayloadBytes +=
-                        json.getBytes(StandardCharsets.UTF_8).length;
+                long start = System.nanoTime();
 
-                coordinator.accept(json);
+                for (int i = 0; i < MESSAGE_COUNT; i++) {
+                    String json = generateMessage(
+                            benchmarkMarker,
+                            i
+                    );
+
+                    totalPayloadBytes += json.getBytes(
+                            StandardCharsets.UTF_8
+                    ).length;
+
+                    coordinator.accept(json);
+                }
+
+                coordinator.flush();
+
+                elapsedNanos = System.nanoTime() - start;
+
+            } finally {
+                if (catalogWorker != null) {
+                    long drainStart = System.nanoTime();
+
+                    catalogWorker.close();
+
+                    catalogDrainNanos =
+                            System.nanoTime() - drainStart;
+
+                    droppedBatches = catalogWorker.droppedBatches();
+                    persistFailures = catalogWorker.persistFailures();
+                }
             }
 
-            coordinator.flush();
+            // Verification is excluded from throughput measurement.
+            long actualRows = countByMarker(
+                    client,
+                    benchmarkMarker
+            );
 
-            long elapsedNanos = System.nanoTime() - start;
+            assertEquals(MESSAGE_COUNT, actualRows);
+
             double seconds = elapsedNanos / 1_000_000_000.0;
 
             double throughput = MESSAGE_COUNT / seconds;
+
             double payloadMiB =
                     totalPayloadBytes / (1024.0 * 1024.0);
+
             double payloadThroughput = payloadMiB / seconds;
-
-            // Kiểm tra sau khi kết thúc phép đo.
-            long actualRows =
-                    countByMarker(client, benchmarkMarker);
-
-            assertEquals(MESSAGE_COUNT, actualRows);
 
             System.out.printf(
                     Locale.ROOT,
                     """
                             
-                            ========= LOGMORPH THROUGHPUT =========
+                            ========= LOGMORPH BENCHMARK =========
+                            Catalog enabled : %s
                             Messages        : %,d
                             Batch size      : %,d
                             INSERT count    : %,d
@@ -140,9 +213,14 @@ class IngestionThroughputTest {
                             JSON throughput : %.2f MiB/sec
                             Average latency : %.3f us/message
                             Verified rows   : %,d
-                            =======================================
+                            
+                            Catalog drain   : %.3f seconds
+                            Dropped batches : %,d
+                            Persist failures: %,d
+                            ======================================
                             
                             """,
+                    catalogEnabled,
                     MESSAGE_COUNT,
                     BATCH_SIZE,
                     (MESSAGE_COUNT + BATCH_SIZE - 1) / BATCH_SIZE,
@@ -151,8 +229,19 @@ class IngestionThroughputTest {
                     throughput,
                     payloadThroughput,
                     seconds * 1_000_000 / MESSAGE_COUNT,
-                    actualRows
+                    actualRows,
+                    catalogDrainNanos / 1_000_000_000.0,
+                    droppedBatches,
+                    persistFailures
             );
+
+            if (catalogEnabled) {
+                assertEquals(
+                        0,
+                        persistFailures,
+                        "Catalog persistence failed during benchmark"
+                );
+            }
         }
     }
 }
