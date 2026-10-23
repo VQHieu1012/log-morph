@@ -1,10 +1,12 @@
 package io.logmorph.catalog;
 
 import io.logmorph.model.TypedLog;
+import io.logmorph.model.ValueType;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -12,18 +14,19 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class CatalogBatchWorker implements AutoCloseable {
+    private static final long FRESHNESS_INTERVAL_NANOS = TimeUnit.HOURS.toNanos(1);
     private final BlockingQueue<SuccessfulBatch> queue;
     private final SchemaObserver observer;
     private final CatalogRepository repository;
     private final Thread workerThread;
-
     private final int flushBatchThreshold;
     private final long flushIntervalNanos;
-
     private final AtomicLong droppedBatches = new AtomicLong();
     private final AtomicLong persistFailures = new AtomicLong();
-
     private final SchemaAggregator aggregator = new SchemaAggregator();
+    private final CatalogFreshnessWorker freshnessWorker;
+
+    private long lastFreshnessSubmissionNanos;
 
     private int batchesSinceFlush = 0;
     private boolean dirty = false;
@@ -60,14 +63,15 @@ public final class CatalogBatchWorker implements AutoCloseable {
         this.repository = repository;
 
         this.queue = new ArrayBlockingQueue<>(queueCapacity);
+        this.freshnessWorker = new CatalogFreshnessWorker(repository);
 
         this.flushBatchThreshold = flushBatchThreshold;
         this.flushIntervalNanos = flushInterval.toNanos();
+        this.lastFreshnessSubmissionNanos = System.nanoTime();
 
         this.lastFlushAttemptNanos = System.nanoTime();
 
         this.workerThread = new Thread(this::runLoop, "logmorph-catalog-worker");
-
         this.workerThread.start();
     }
 
@@ -78,9 +82,7 @@ public final class CatalogBatchWorker implements AutoCloseable {
         Objects.requireNonNull(batch);
         Objects.requireNonNull(observedAt);
 
-        if (batch.isEmpty()) {
-            return true;
-        }
+        if (batch.isEmpty()) return true;
 
         SuccessfulBatch successfulBatch =
                 new SuccessfulBatch(batch, observedAt);
@@ -98,19 +100,27 @@ public final class CatalogBatchWorker implements AutoCloseable {
             while (!stopping || !queue.isEmpty()) {
                 SuccessfulBatch batch = queue.poll(200, TimeUnit.MILLISECONDS);
 
-                if (batch != null) {
-                    process(batch);
-                }
-
-                if (shouldFlush()) {
-                    flush();
-                }
+                if (batch != null) process(batch);
+                if (shouldFlush()) flush();
+                submitFreshnessIfDue();
             }
+
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+
         } finally {
             if (dirty) {
                 flush();
+            }
+
+            // Flush discovery trước khi refresh freshness,
+            // tránh UPDATE những rows chưa được INSERT.
+            freshnessWorker.submit(aggregator.snapshot());
+
+            try {
+                freshnessWorker.close();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
         }
     }
@@ -185,5 +195,21 @@ public final class CatalogBatchWorker implements AutoCloseable {
             stopping = true;
         }
         workerThread.join();
+    }
+
+    private void submitFreshnessIfDue() {
+        long now = System.nanoTime();
+
+        if (now - lastFreshnessSubmissionNanos
+                < FRESHNESS_INTERVAL_NANOS) {
+            return;
+        }
+
+        lastFreshnessSubmissionNanos = now;
+
+        Map<String, Map<ValueType, Instant>> snapshot =
+                aggregator.snapshot();
+
+        freshnessWorker.submit(snapshot);
     }
 }

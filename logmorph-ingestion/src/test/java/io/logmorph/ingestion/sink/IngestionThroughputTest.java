@@ -1,4 +1,3 @@
-
 package io.logmorph.ingestion.sink;
 
 import com.clickhouse.client.api.Client;
@@ -42,6 +41,7 @@ class IngestionThroughputTest {
                 .build();
     }
 
+
     private String generateMessage(String marker, int sequence) {
         int fieldIndex = sequence % FIELD_CARDINALITY;
 
@@ -49,20 +49,36 @@ class IngestionThroughputTest {
                 {
                   "bench_marker": "%s",
                   "sequence": %d,
+                  "timestamp": "2026-10-23T10:00:00Z",
                   "service": "payment",
+                  "environment": "production",
+                  "level": "INFO",
                   "event": "checkout",
-                  "amount": 125.75,
+                  "request_id": "req-%d",
+                  "trace_id": "trace-%d",
+                  "host": "payment-worker-01",
+                  "region": "ap-southeast-1",
+                  "http_method": "POST",
+                  "http_status": 200,
+                  "duration_ms": 125.75,
                   "success": true,
+                  "retry_count": 0,
                   "dynamic_field_%d": 100,
                   "tags": ["api", "payment", "production"],
-                  "scores": [10.5, 20.25, 30.75],
                   "metadata": {
-                    "region": "ap-southeast-1",
-                    "host": "worker-01"
+                    "endpoint": "/api/v1/checkout",
+                    "version": "v1"
                   }
                 }
-                """.formatted(marker, sequence, fieldIndex);
+                """.formatted(
+                marker,
+                sequence,
+                sequence,
+                sequence,
+                fieldIndex
+        );
     }
+
 
     private CatalogBatchWorker createCatalogWorker() {
         PGSimpleDataSource dataSource = new PGSimpleDataSource();

@@ -34,7 +34,11 @@ public final class PostgresCatalogRepository implements CatalogRepository {
                 observed_at
             )
             VALUES (?, ?, ?)
-            ON CONFLICT (field_name, value_type) DO NOTHING
+            ON CONFLICT (field_name, value_type)
+            DO UPDATE SET
+                observed_at = EXCLUDED.observed_at
+            WHERE logmorph.schema_catalog.observed_at
+                  < EXCLUDED.observed_at
             """;
 
     private static final String REFRESH_OBSERVED_AT_SQL = """
